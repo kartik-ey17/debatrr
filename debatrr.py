@@ -1,9 +1,10 @@
 import ollama
 import json
+from ddgs import DDGS
 
-cloud_model = "gpt-oss:120b-cloud"
+ai_model = "gpt-oss:120b-cloud"
 
-straycat = input("Elaborate any idea you have and want to stress test : ")
+idea = input("Elaborate any idea you have and want to stress test : ")
 
 prompt = f"""
 
@@ -26,20 +27,21 @@ potential_risks : "..."
 
 thats it , nothing other than this , just an output of this format.
 
-the idea or input - {straycat}
+the idea or input - {idea}
 Return ONLY JSON output
 """
 
 response = ollama.generate(
-    model = 'gpt-oss:120b-cloud',
+    model = ai_model,
     prompt = prompt ,
      stream = False
 )
 
 raw = response["response"]
-
+raw = raw.strip().strip("```json").strip("```").strip()
 data = json.loads(raw)
 
+print(f"structured idea: {data}")
 for_agent_mem = []
 against_agent_mem = []
 
@@ -47,6 +49,20 @@ transcript = []
 
 def add_to_transcript(agent_name , argument):
     transcript.append({'agent' : agent_name ,'content' : argument})
+
+def web_search(queries, max_result= 3):
+    results = []
+    with DDGS() as ddgs:
+        for query in queries:
+            for r in ddgs.text(query, max_result=max_result):
+                results.append({
+                    "query": query,
+                    "title": r.get("title"),
+                    "body": r.get("body"),
+                    "link": r.get("href")
+                })
+    return results
+
 def for_agent() :
     for_prompt = f"""
     You are a master in debating for arguments , meaning you are very good in debating in the favour of the argument you have a tough opponent who will argue against your arguments , HOLD A GENUINE DEBATE WITH THEM;
@@ -69,7 +85,7 @@ def for_agent() :
     max 120 words per round , dont go horizontal and dont try to add many points in one round , go for 1-2 points and go a bit deep into them and reason how they favour the claim.
 """
     response = ollama.generate(
-        model = "gpt-oss:120b-cloud",
+        model = ai_model,
         prompt = for_prompt,
         stream = False
     )
@@ -99,7 +115,7 @@ def against_agent():
     Last but not the least , dont behave like you are giving an output to a human , your output is supposed to be in the backend , write the output like you are GENUINELY debating a person , not explaining them or teaching them.
 """
     response = ollama.generate(
-        model = 'gpt-oss:120b-cloud',
+        model = ai_model,
         prompt = against_prompt,
         stream = False
     )
@@ -112,7 +128,7 @@ def debate_supervisor():
     eval_prompt = f"""
     You are a professional debate evaluator. Your only job is to evaluate the LAST EXCHANGE of a debate and reurn a JSON score object.
     The idea that the debate is on about is {data} , understand it for the context for further evaluation.
-    the last exhange happened was {transcript} ; 
+    the last exhange happened was {transcript[-2:]} ; 
 
     SCORE on these 5 parameters , each on a scale of 1-5 ONLU:
     1. argument_novelty - did the last exchange introduce any new points or just restate the old ones?
@@ -137,7 +153,7 @@ def debate_supervisor():
   }}
 """
     response = ollama.generate(
-        model = 'gpt-oss:120b-cloud',
+        model = ai_model,
         prompt = eval_prompt ,
         stream = False
     )
@@ -147,9 +163,9 @@ def debate_supervisor():
 value = debate_supervisor()
 
 def cut_debate(value, round_no):
-    if round_no < 2:
+    if round_no <= 2:
         return False
-    if round_no > 6:
+    if round_no >= 6:
         return True
     if value["argument_novelty"] < 3 and value["contention_level" ] < 3:
         return True
@@ -160,8 +176,37 @@ def cut_debate(value, round_no):
 round_no = 1
 stop = False
 
+def query_generator():
+    query_prompt = f"""
+        Your job is to generate a total of 2-3 ideal queries for web search ; the queries results will be later used by DEBATING agents to support their arguments.
+        You have to predict what points/statistics would be worth a search every round depending on the debate progression
+        You can directly view the past interactions in {transcript[-2:]} ; understand the conversation and points raised by both parties and try to come up with best queries to search on web.
+        The queries may help ; validate claims or find data/statistics or anything else necessary.
+        return only a python list of strings
+"""
+    response  = ollama.generate(
+        model = ai_model ,
+        prompt = query_prompt ,
+        stream = False
+    )
+
+
+def search_summarizer():
+    summary_prompt = f"""
+    Your job is to summarize the results of a web search stated in - , your summary would be sent be debating agents.
+    They will be using the summary for presenting thier points further , the data you get would be having claims , statisics , cases , 
+    you have to structurally summarize the relevant data and present it for further proceedures mentioned above.
+
+    return a python string
+"""
+    response = ollama.generate(
+        model = ai_model,
+        prompt = summary_prompt,
+        stream = False
+    )
+
 while not stop:
-    print("----Round", round_no, "----")
+    print("----Round",round_no,"----")
     for_agent()
     against_agent()
 
@@ -184,9 +229,9 @@ def insight_agent():
     {{
         "strongest_argument_for": "<the  most compelling argument made in favour of the idea>",
         "strongest_argument_against": "<the most compelling argument made against the idea.>",
-        "fatal_flaw": "<the one thing that could kill this idea if not addressed properly , leave empty string if NONE>"
-        "verdict": "<one of:  STRONG IDEA / PROMISING BUT RISKY / NEEDS RETHINKING / FUNDAMENTALLY FLAWED>"
-        "confidence": <1-5>
+        "fatal_flaw": "<the one thing that could kill this idea if not addressed properly , leave empty string if NONE>",
+        "verdict": "<one of:  STRONG IDEA / PROMISING BUT RISKY / NEEDS RETHINKING / FUNDAMENTALLY FLAWED>",
+        "confidence": <1-5>,
         "reasoning": "<2-3 sentences max on why you gave this verdict , be direct.>"
     }}
     Rules:
@@ -196,11 +241,12 @@ def insight_agent():
     If the debate was shallow , reflect that in a lower confidence score.
 """
     response = ollama.generate(
-        model= cloud_model , 
+        model= ai_model , 
         prompt= insight_prompt,
         stream= False
     )
     raw = response["response"]
+    raw = raw.strip().strip("```json").strip("```").strip()
     return json.loads(raw)
 
 verdict = None
@@ -229,6 +275,7 @@ while True:
     
     elif choice == '4':
         print("Goodbye!")
+        break
     
     else:
         print("Choose a valid option.")
