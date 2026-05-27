@@ -1,5 +1,5 @@
 # debatrr
-debatrr is a multi agentic setup to stress test any of your startup ideas.
+debatrr is an LLM Orchestration to stress test any of your startup ideas.
 
 To validate a business idea , we often have to first research on the idea for a long time , and still we have our biases , **debatrr** makes this process easy by unbiasedly evaluating both the good and bad aspects of the idea and provide a clearer picture of the idea along with useful insights.
 
